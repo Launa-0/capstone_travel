@@ -1,6 +1,9 @@
 """'왜 이렇게 만들었나' 탭: EDA·3단계·4단계 결과를 데모의 설계 근거로 풀어 쓴 요약."""
 from pathlib import Path
 
+import altair as alt
+import numpy as np
+import pandas as pd
 import streamlit as st
 
 
@@ -11,6 +14,49 @@ def _img(data_dir: Path, name: str, caption: str):
             st.image(str(p), caption=caption, width="stretch")
         except Exception:
             st.image(str(p), caption=caption, use_container_width=True)
+
+
+def _chart(ch):
+    try:
+        st.altair_chart(ch, width="stretch")
+    except Exception:
+        st.altair_chart(ch, use_container_width=True)
+
+
+def _bias_charts(data_dir):
+    v = pd.read_csv(Path(data_dir) / "poi.csv")["train_visits"].to_numpy()
+    v = np.sort(v[v > 0])[::-1]
+    n = len(v)
+    rank = pd.DataFrame({"순위": np.arange(1, n + 1), "방문수": v})
+    asc = v[::-1]
+    c = np.r_[0, np.cumsum(asc) / asc.sum()]
+    lor = pd.DataFrame({"장소 누적 비율": np.arange(n + 1) / n, "방문 누적 비율": c})
+    diag = pd.DataFrame({"장소 누적 비율": [0, 1], "방문 누적 비율": [0, 1]})
+    grp = pd.DataFrame({"그룹": ["미방문", "저방문", "고방문"], "비중(%)": [13.3, 26.5, 60.2]})
+    a, b, d = st.columns(3)
+    with a:
+        _chart(alt.Chart(rank, title="순위-방문수 (로그-로그)", height=260).mark_line().encode(
+            x=alt.X("순위:Q", scale=alt.Scale(type="log")), y=alt.Y("방문수:Q", scale=alt.Scale(type="log"))))
+    with b:
+        l1 = alt.Chart(lor, title="로렌츠 곡선 (지니 0.622)", height=260).mark_line().encode(x="장소 누적 비율:Q", y="방문 누적 비율:Q")
+        l2 = alt.Chart(diag).mark_line(strokeDash=[5, 4], color="#f58518").encode(x="장소 누적 비율:Q", y="방문 누적 비율:Q")
+        _chart(l1 + l2)
+    with d:
+        _chart(alt.Chart(grp, title="검증 정답의 방문 그룹 비중", height=260).mark_bar().encode(
+            x=alt.X("그룹:N", sort=["미방문", "저방문", "고방문"], axis=alt.Axis(labelAngle=0)), y="비중(%):Q",
+            tooltip=["그룹", "비중(%)"]))
+    st.caption("방문 상위 10% 장소가 방문의 55.3%를 차지하고, 방문이 1회뿐인 장소가 54.4%입니다(학습 방문이 있는 3,136곳 기준).")
+
+
+def _dist_chart():
+    df = pd.DataFrame({
+        "그룹": ["미방문", "저방문", "고방문"] * 2,
+        "방식": ["거리 기준 10곳"] * 3 + ["SASRec"] * 3,
+        "Recall@10": [0.214, 0.281, 0.155, 0.000, 0.129, 0.547],
+    })
+    _chart(alt.Chart(df, title="그룹별 Recall@10: 직전 방문지에서 가까운 10곳 vs SASRec (Val)", height=280).mark_bar().encode(
+        x=alt.X("그룹:N", sort=["미방문", "저방문", "고방문"], axis=alt.Axis(labelAngle=0), title=None),
+        xOffset="방식:N", y="Recall@10:Q", color="방식:N", tooltip=["그룹", "방식", "Recall@10"]))
 
 
 def render_study(data_dir):
@@ -27,7 +73,7 @@ def render_study(data_dir):
         "방문 이력만 학습하는 SASRec은 이 편향을 그대로 따라가서, 검증 데이터 기준 저방문 정답은 "
         "Recall@10 0.129, 한 번도 방문된 적 없는 장소(미방문)는 0.000이었습니다."
     )
-    _img(data_dir, "fig07_visit_distribution.png", "방문 빈도 분포(좌), 로렌츠 곡선(중), 검증 정답의 방문 그룹 비중(우)")
+    _bias_charts(data_dir)
 
     # ---------------------------------------------------------------- 2. 신호
     st.subheader("2. 이력 말고 쓸 수 있는 신호")
@@ -41,7 +87,7 @@ def render_study(data_dir):
         "별도 항으로는 쓰지 않았습니다.\n"
         "- **개인 스타일 설문**: 일관된 신호가 약해 모델에 넣지 않았습니다(구현·검증하지 않은 것이며 후속 과제입니다)."
     )
-    _img(data_dir, "fig14_distance.png", "직전 방문지→정답 거리 분포(좌), 거리만 쓴 추천과 SASRec의 그룹별 Recall@10(우)")
+    _dist_chart()
 
     # ---------------------------------------------------------------- 3. 점수 결합
     st.subheader("3. 점수 결합: 시퀀스 1 + 텍스트 1 + 거리 0.25")
