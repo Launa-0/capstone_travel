@@ -86,6 +86,12 @@ def main():
     for f in ("results_test.csv", "results_test_paired.csv", "results_val.csv", "results_val_paired.csv"):
         if (s3 / f).exists():
             shutil.copy(s3 / f, out / f)
+    if (s3 / "rerank_val_grid.csv").exists():
+        shutil.copy(s3 / "rerank_val_grid.csv", out / "rerank_val_grid.csv")
+    (out / "figs").mkdir(exist_ok=True)
+    for f in ("pipeline_final.png", "rerank_trade_off.png", "test_tradeoff_group.png", "test_paired_forest.png"):
+        if (s3 / f).exists():
+            shutil.copy(s3 / f, out / "figs" / f)
     shutil.copy(hand / "sasrec_model.py", HERE / "sasrec_model.py")
 
     # --- 샘플 여행 (Val) -----------------------------------------------------

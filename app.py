@@ -62,6 +62,13 @@ def nm(i: int) -> str:
 
 
 # --------------------------------------------------------------------------- 사이드바
+from report_view import render_reports  # noqa: E402
+
+view = st.sidebar.radio("화면", ["🧭 추천 데모", "📚 연구 보고서"], key="view")
+if view.startswith("📚"):
+    render_reports(DATA)
+    st.stop()
+st.sidebar.divider()
 st.sidebar.title("🧭 입력")
 mode = st.sidebar.radio("입력 방식", ["샘플 여행 (Val)", "직접 입력"], help="샘플은 검증(Val) 데이터의 실제 여행입니다.")
 
@@ -131,7 +138,7 @@ with st.sidebar.expander("⚙️ 파이프라인 설정 (데모용)"):
     w_seq = st.slider("시퀀스 가중치", 0.0, 2.0, float(DEF_W["seq"]), 0.05, key="w_seq")
     w_text = st.slider("텍스트 가중치", 0.0, 2.0, float(DEF_W["text"]), 0.05, key="w_text")
     w_dist = st.slider("거리 가중치", 0.0, 2.0, float(DEF_W["dist"]), 0.05, key="w_dist")
-    m = st.slider("저·미방문 최소 보장 수 m (0이면 재랭킹 없음)", 0, 4, DEF_M, key="m")
+    m = st.slider("저·미방문 최소 보장 수 m (0이면 재랭킹 없음)", 0, 3, DEF_M, key="m", help="보고서에서 평가한 값은 1~3입니다.")
 weights = {"seq": w_seq, "text": w_text, "dist": w_dist}
 if sum(weights.values()) == 0:
     st.sidebar.error("가중치가 모두 0입니다.")
@@ -196,36 +203,90 @@ def stats(lst):
     return low, float(TV[lst].mean())
 
 
-st.subheader("2. 추천 결과 — Top-10")
-cols = st.columns(3)
-panels = [
-    ("SASRec 단독", res.sas_top, "none", "방문 순서만 보는 기준 모델"),
-    ("결합 (재랭킹 전)", res.before, "before", "시퀀스 + 텍스트 + 거리"),
-    (f"제안 (재랭킹 후, 보장 m={m})" if m else "제안 (재랭킹 없음)", res.after, "after", "저·미방문 최소 보장 적용"),
-]
-base_low, base_arp = stats(res.sas_top)
-for col, (title, lst, kind, sub) in zip(cols, panels):
-    with col:
-        st.markdown(f"#### {title}")
-        st.caption(sub)
-        low, arp = stats(lst)
-        a, b = st.columns(2)
-        a.metric("저·미방문 추천", f"{low} / 10", delta=None if kind == "none" else f"{low - base_low:+d} (SASRec 대비)")
-        b.metric("평균 학습 방문수", f"{arp:.1f}", delta=None if kind == "none" else f"{arp - base_arp:+.1f}",
-                 delta_color="inverse")
-        st.dataframe(table(lst, kind), hide_index=True, height=392,
-                     column_config={"#": st.column_config.NumberColumn(width="small"), "방문": st.column_config.TextColumn(width="small")})
-        if target is not None:
-            st.markdown("정답 포함: " + ("✅ **적중**" if target in set(lst) else "❌ 없음"))
+def reason(i: int) -> str:
+    if i in res.added:
+        return "저·미방문 최소 보장으로 추가"
+    pos = {k: max(float(v[i]), 0.0) for k, v in res.parts.items()}
+    tot = sum(pos.values()) or 1.0
+    name = {"seq": "방문 순서", "text": "텍스트 유사", "dist": "가까운 거리"}
+    top = sorted(pos, key=pos.get, reverse=True)[:2]
+    return " · ".join(f"{name[k]} {pos[k] / tot:.0%}" for k in top if pos[k] > 0) or "-"
 
-st.info("**읽는 법** · 방문 열: 🔵 고방문(학습 방문 6회 이상) 🟠 저방문(1~5회) 🟢 미방문(0회) 뒤의 숫자는 학습 데이터 방문 횟수 · "
-        "⭐ 정답 · 🆕 보장으로 추가 · ⬇ 재랭킹에서 제외 · ⚠ 방문 좌표가 30km 넘게 흩어진 장소(원본 데이터의 장소 매칭 오류 가능).  \n"
-        "한 여행의 정답 적중 여부는 사례일 뿐이며 성능 근거가 아닙니다. 전체 성능은 '실험 결과' 탭을 보세요.")
+
+def km_from_last(i: int) -> float:
+    last = hist[-1]
+    d = np.hypot((demo.X[i] - demo.X[last]) * 88.9, (demo.Y[i] - demo.Y[last]) * 111.0)
+    return float(d)
+
+
+def result_table(lst):
+    rows, tags = [], []
+    for r, i in enumerate(lst, 1):
+        tag = []
+        if target is not None and i == target:
+            tag.append("⭐")
+        if i in res.added:
+            tag.append("🆕")
+        if SPREAD[i] > 30:
+            tag.append("⚠")
+        tags.append(" ".join(tag))
+        d = km_from_last(i)
+        rows.append({"#": r, "장소": f"{' '.join(tag)} {nm(i)}".strip(), "지역": PO["region"].iloc[i],
+                     "구분": f"{BADGE[GRP[i]]} ({int(TV[i])}회)", "직전 방문지에서": ("-" if np.isnan(d) else f"{d:.1f}km"),
+                     "추천 이유 (점수 기여)": reason(i)})
+    df = pd.DataFrame(rows)
+
+    def color(row):
+        t = tags[row.name]
+        c = "background-color:#fff3b0" if "⭐" in t else "background-color:#dff5df" if "🆕" in t else ""
+        return [c] * len(row)
+
+    return df.style.apply(color, axis=1)
+
+
+st.subheader("2. 추천 결과 — Top-10")
+low_n, arp_v = stats(res.after)
+c1, c2, c3 = st.columns([1, 1, 2])
+c1.metric("덜 알려진 곳(저·미방문)", f"{low_n} / 10")
+c2.metric("평균 학습 방문수", f"{arp_v:.1f}")
+if target is not None:
+    c3.markdown("**실제 다음 방문지 포함 여부**  \n" + ("✅ **적중**" if target in set(res.after) else "❌ 이번 사례에서는 없음"))
+st.dataframe(result_table(res.after), hide_index=True, height=392,
+             column_config={"#": st.column_config.NumberColumn(width="small")})
+
+st.info("**읽는 법** · 구분: 🔵 고방문(학습 방문 6회 이상) 🟠 저방문(1~5회) 🟢 미방문(0회), 괄호는 학습 데이터 방문 횟수 · "
+        "🆕 저·미방문 보장으로 들어온 장소 · ⭐ 실제 다음 방문지 · ⚠ 방문 좌표가 30km 넘게 흩어진 장소(원본 데이터의 장소 매칭 오류 가능).  \n"
+        "한 여행의 적중 여부는 사례일 뿐이며 성능 근거가 아닙니다. 전체 성능은 '실험 결과' 탭을 보세요.")
 
 # --------------------------------------------------------------------------- 탭
-t1, t2, t3, t4 = st.tabs(["🔁 재랭킹 전후", "🧮 점수 구성", "🗺️ 지도", "📊 실험 결과"])
+t1, t2, t3, t4 = st.tabs(["🔁 방식 비교 (재랭킹 전후)", "🧮 점수 구성", "🗺️ 지도", "📊 실험 결과"])
 
 with t1:
+    st.caption("같은 입력으로 방식을 바꿔 본 결과입니다 (발표·분석용). 메인 화면의 추천은 오른쪽 '제안' 한 가지입니다.")
+    def _stats_tbl(lst, kind):
+        return table(lst, kind)
+    cols = st.columns(3)
+    panels = [
+        ("SASRec 단독", res.sas_top, "none", "방문 순서만 보는 기준 모델"),
+        ("결합 (재랭킹 전)", res.before, "before", "시퀀스 + 텍스트 + 거리"),
+        (f"제안 (재랭킹 후, 보장 m={m})" if m else "제안 (재랭킹 없음)", res.after, "after", "저·미방문 최소 보장 적용"),
+    ]
+    base_low, base_arp = stats(res.sas_top)
+    for col, (title, lst, kind, sub) in zip(cols, panels):
+        with col:
+            st.markdown(f"#### {title}")
+            st.caption(sub)
+            low, arp = stats(lst)
+            a, b = st.columns(2)
+            a.metric("저·미방문 추천", f"{low} / 10", delta=None if kind == "none" else f"{low - base_low:+d} (SASRec 대비)")
+            b.metric("평균 학습 방문수", f"{arp:.1f}", delta=None if kind == "none" else f"{arp - base_arp:+.1f}",
+                     delta_color="inverse")
+            st.dataframe(_stats_tbl(lst, kind), hide_index=True, height=392,
+                         column_config={"#": st.column_config.NumberColumn(width="small"), "방문": st.column_config.TextColumn(width="small")})
+            if target is not None:
+                st.markdown("정답 포함: " + ("✅ **적중**" if target in set(lst) else "❌ 없음"))
+
+
     n_before = stats(res.before)[0]
     n_after = stats(res.after)[0]
     st.markdown(
@@ -320,21 +381,64 @@ with t3:
     st.caption("회색 선: 입력한 방문 순서 · 색 점: 제안 추천(🔵고방문 🟠저방문 🟢미방문) · 노란 점: 정답 · 연회색 점: 재랭킹에서 빠진 장소")
 
 with t4:
-    st.markdown("**평가용(Test) 373건 결과** — 포스터 표 1과 같은 수치입니다. (설정을 모두 확정한 뒤 Test를 한 번만 열었습니다.)")
-    try:
-        tt = pd.read_csv(DATA / "results_test.csv", encoding="utf-8-sig", index_col=0)
-        want = {"SASRec": "SASRec 단독", "지역+인기(기준선)": "지역+인기 (사후 기준선)", "CF": "협업 필터링(CF)",
+    st.caption("평가용(Test) 373건 · 설정을 모두 확정한 뒤 Test를 한 번만 열어 얻은 결과입니다. 해석과 판정은 '📚 연구 보고서'의 3·4단계를 보세요.")
+    k1, k2, k3, k4 = st.tabs(["핵심 요약", "Test 전체 표·차이", "Val 설정 선택", "그림"])
+    tt = pd.read_csv(DATA / "results_test.csv", encoding="utf-8-sig", index_col=0)
+    pr = pd.read_csv(DATA / "results_test_paired.csv", encoding="utf-8-sig", index_col=0)
+
+    with k1:
+        want = {"SASRec": "SASRec 단독", "지역+인기(기준선)": "지역+인기 (기준선)", "CF": "협업 필터링(CF)",
                 "최종 (시퀀스+텍스트+거리)": "결합 (재랭킹 전)", "4단계 최종 (보장 m=2)": "제안 (보장 m=2)"}
-        sub = tt.loc[list(want)].rename(index=want)
-        sub = sub[["전체", "저방문", "고방문", "미방문", "저·미방문 노출비율", "ARP(평균 Train 방문수)", "Coverage"]]
-        sub.columns = ["Recall@10 전체", "저방문", "고방문", "미방문", "저·미방문 노출비율", "평균 학습 방문수(ARP)", "Coverage"]
+        sub = tt.loc[list(want)].rename(index=want)[["전체", "저방문", "고방문", "저·미방문 노출비율", "ARP(평균 Train 방문수)", "Coverage"]]
+        sub.columns = ["Recall@10 전체", "저방문", "고방문", "저·미방문 노출비율", "평균 학습 방문수(ARP)", "Coverage"]
         st.dataframe(sub.style.format("{:.3f}").format("{:.1f}", subset=["평균 학습 방문수(ARP)"]))
-    except Exception as e:  # noqa: BLE001
-        st.warning(f"결과표를 읽지 못했습니다: {e}")
-    st.caption("미방문 열은 Test의 미방문 정답이 2건뿐이라 해석하지 않습니다.")
-    st.markdown(
-        "- 전체 Recall@10은 SASRec 0.416 → 제안 0.389로 낮았지만, 차이는 통계적으로 유의하지 않았습니다(−0.027, 95% 구간 [−0.056, +0.003]). **정확도가 유지됐다고 단정할 수는 없습니다.**\n"
-        "- 저·미방문 추천 비율은 27.9% → 39.4%로, 평균 학습 방문수는 21.0 → 17.7로 바뀌었습니다.\n"
-        "- 지역+인기 기준선은 결과를 확인한 뒤 추가한 사후 비교입니다.\n"
-        "- 검증(Val)에서 보인 텍스트·거리 결합의 이득은 Test에서 재현되지 않았습니다. 미방문 정답은 Test에 2건뿐이라 미방문 성능은 평가하지 못했고, 정답의 17.2%는 후보 풀 밖이라 어떤 모델도 맞힐 수 없었습니다."
-    )
+        st.caption("미방문 정답은 Test에 2건뿐이라 미방문 열은 표에서 뺐습니다.")
+        st.markdown(
+            "**쓸 수 있는 주장**\n"
+            "- 보장 재랭킹으로 저·미방문 노출이 늘었습니다: 노출비율 0.279 → 0.345(결합) → 0.394(제안), Coverage 0.270 → 0.321, 평균 학습 방문수 21.0 → 17.7. 다만 보장 규칙이 만든 값이라 예측력의 증거는 아닙니다.\n"
+            "- 같은 전체 Recall에서 지역+인기 기준선보다 저방문 Recall이 높습니다: **+0.099 [+0.033, +0.176] ★** (0.099 → 0.198).\n"
+            "- 전체 Recall 차이(제안 − SASRec)는 −0.027 [−0.056, +0.003]으로 통계적으로 유의하지 않았습니다. 다만 **유지가 입증된 것은 아니며** “손실이 없다”고 쓰면 안 됩니다.\n\n"
+            "**주장하지 않는 것**\n"
+            "- 결합 모델이 SASRec보다 정확하다 · 텍스트·거리가 Recall을 높인다 (Val의 이득이 Test에서 재현되지 않음)\n"
+            "- 미방문을 개선했다 (Test 미방문 n=2)\n\n"
+            "**한계**: 선택과 평가가 같은 Val이라 Val 수치는 낙관적 · 정답의 17.2%(64행)는 후보 풀 밖, 8.3%(31행)는 풀 안 입력 이력이 비어 모든 모델이 못 맞힘 · 저방문 n=91로 표본이 작음")
+
+    with k2:
+        tbl = tt[["미방문", "저방문", "고방문", "전체", "도달가능 전체", "NDCG@10", "저·미방문 노출비율", "Coverage", "ARP(평균 Train 방문수)"]]
+        st.markdown("**Recall@10와 노출 지표 (Test, 전체 15개 방법)**")
+        st.dataframe(tbl.style.format("{:.3f}").format("{:.1f}", subset=["ARP(평균 Train 방문수)"]))
+        st.caption("미방문 열은 n=2라 참고용입니다. 도달가능 전체는 정답이 후보 풀 안에 있는 행만 본 값입니다.")
+        extra = pd.DataFrame({
+            "미방문": ["+0.000 [+0.000,+0.000]", "+0.000 [+0.000,+0.000]", "+0.000 [+0.000,+0.000]"],
+            "저방문": ["+0.011 [+0.000,+0.033]", "+0.000 [-0.055,+0.055]", "+0.099 [+0.033,+0.176] ★"],
+            "고방문": ["-0.014 [-0.028,+0.000]", "-0.046 [-0.093,+0.000]", "-0.051 [-0.111,+0.009]"],
+            "전체": ["-0.005 [-0.016,+0.005]", "-0.027 [-0.056,+0.003]", "-0.005 [-0.043,+0.035]"],
+        }, index=["4단계 최종 − 3단계 결합", "4단계 최종 − SASRec", "4단계 최종 − 지역+인기"])
+        st.markdown("**차이와 95% 구간 (paired bootstrap, ★ = 구간이 0을 포함하지 않음)**")
+        st.dataframe(pd.concat([pr, extra]))
+        st.caption("저·미방문 노출비율의 4단계 − 3단계 차이는 +0.049 [+0.041, +0.057] ★ (보장 규칙이 만든 값). 위 표 앞 6행은 3단계 결합 기준, 뒤 3행은 4단계 최종 기준입니다.")
+        rk = pd.DataFrame({
+            "미방문": ["+0.000 [+0.000,+0.000]"] * 4,
+            "저방문": ["+0.044 [+0.011,+0.088] ★", "-0.011 [-0.066,+0.044]", "+0.099 [+0.044,+0.165] ★", "+0.012 [-0.014,+0.042]"],
+            "고방문": ["-0.005 [-0.051,+0.037]", "-0.032 [-0.074,+0.014]", "+0.032 [-0.009,+0.074]", "-0.026 [-0.060,+0.005]"],
+            "전체": ["+0.008 [-0.019,+0.035]", "-0.021 [-0.051,+0.008]", "+0.043 [+0.013,+0.072] ★", "-0.012 [-0.033,+0.008]"],
+        }, index=["Recall@5", "Recall@10", "Recall@20", "NDCG@10"])
+        st.markdown("**평가 지표를 바꿔 보면 (3단계 결합 − SASRec)**")
+        st.dataframe(rk)
+
+    with k3:
+        g = pd.read_csv(DATA / "rerank_val_grid.csv", encoding="utf-8-sig", index_col=0)
+        g["규칙 통과"] = [("기준" if n.startswith("기준") else ("✅" if (r["Δ전체"] >= -0.01 and r["Δ고방문"] >= -0.03) else "❌")) for n, r in g.iterrows()]
+        st.markdown("**재랭킹 설정 선택 (Val, 사전 규칙)** — 전체 Recall 손실 ≤ 0.01, 고방문 손실 ≤ 0.03을 만족하는 설정 중 저·미방문 노출이 가장 높은 것 (0.005 이내는 동점 → 더 약한 설정). 선택: **보장 m=2**")
+        show = g[["저방문", "고방문", "전체", "Δ전체", "Δ고방문", "NDCG@10", "저·미방문 노출", "ARP", "Coverage", "Gini(노출)", "규칙 통과"]]
+        st.dataframe(show.style.format({c: "{:.3f}" for c in show.columns if c != "규칙 통과"} | {"ARP": "{:.1f}"})
+                     .apply(lambda r: ["background-color:#dff5df"] * len(r) if r.name == "보장 m=2" else [""] * len(r), axis=1))
+        st.caption("보너스는 γ가 커질수록 노출이 오르지만 전체 Recall이 급락해 사전 규칙을 만족한 설정이 없었고, MMR은 노출이 거의 변하지 않아(0.378~0.383) 효과가 입증되지 않았습니다. "
+                   "선택과 평가가 같은 Val이라 낙관적입니다.")
+
+    with k4:
+        figs = DATA / "figs"
+        st.image(str(figs / "pipeline_final.png"), caption="최종 파이프라인")
+        st.image(str(figs / "rerank_trade_off.png"), caption="재랭킹 trade-off (Val): 가로 전체 Recall@10, 세로 저·미방문 노출비율. 보장은 Recall을 유지하며 노출을 올리고, 보너스는 Recall이 급락, MMR은 변화 없음.")
+        st.image(str(figs / "test_tradeoff_group.png"), caption="Test: 정확도 대비 노출(왼쪽)과 그룹별 Recall(오른쪽)")
+        st.image(str(figs / "test_paired_forest.png"), caption="Test: paired 차이의 95% 범위. 선이 0을 가로지르면 '차이가 있다고 말할 수 없음'")

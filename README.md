@@ -12,6 +12,7 @@ streamlit run app.py
 |---|---|
 | `app.py` | 화면 (사이드바 입력 → Top-10 3종 비교 → 탭 4개) |
 | `pipeline.py` | 파이프라인: SASRec + 텍스트 + 거리 → z-점수 결합 → 후보 50 → 저·미방문 보장(m=2) → Top-10. 팀원 `최종_Test.ipynb`와 같은 정의 |
+| `report_view.py` | 📚 연구 보고서 화면 (노션 보고서 3편을 목차별로 표시) |
 | `sasrec_model.py` | 승현 SASRec 모델 코드 (handoff와 동일) |
 | `demo_data/` | 앱이 읽는 데이터 (장소 3,389곳, 임베딩, SASRec 가중치, 확정 설정, 샘플 Val 여행 525개, Test 결과표) |
 | `build_demo_data.py` | `demo_data/`를 다시 만드는 스크립트 (+ Val 재현 검사) |
@@ -22,6 +23,10 @@ python build_demo_data.py --pre <preprocessed_combined> --step3 <step3_out> --ha
 ```
 끝에 Val 재현 검사가 출력된다. 기대값: SASRec 0.364 / 결합 0.404(저방문 0.194) / 4단계 0.402(저방문 0.216) / 저·미방문 노출 0.377→0.425.
 설정(`final_config.json`)이 바뀌면 이 검사부터 다시 확인한다.
+
+## 화면 구성
+- 🧭 추천 데모: 입력(방문 순서) → **최종 추천 Top-10 한 가지**를 보여 준다. 방식 비교, 점수 구성, 지도, 실험 결과는 아래 탭에 있다.
+- 📚 연구 보고서: EDA, 3단계, 4단계 노션 보고서(`demo_data/reports/*.md`)와 그림(`demo_data/figs/`). 원문 그대로이며 앱이 새로 계산한 값이 아니다. 목차 선택과 검색이 된다.
 
 ## 화면 사용법
 - 샘플 여행(Val): 실제 여행의 앞부분을 입력으로, 그다음 방문지를 '정답(⭐)'으로 보여 준다. 슬라이더로 여행 초반/후반 상황을 바꿀 수 있다.
