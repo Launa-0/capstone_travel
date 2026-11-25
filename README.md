@@ -1,0 +1,31 @@
+# 저방문·미방문 관광지 추천 데모 (Streamlit)
+
+## 실행
+```bash
+pip install -r requirements.txt     # torch는 CPU 버전이면 충분
+streamlit run app.py
+```
+브라우저가 자동으로 열린다 (안 열리면 http://localhost:8501). 지도 배경 타일은 인터넷 연결이 필요하다.
+
+## 구성
+| 파일 | 역할 |
+|---|---|
+| `app.py` | 화면 (사이드바 입력 → Top-10 3종 비교 → 탭 4개) |
+| `pipeline.py` | 파이프라인: SASRec + 텍스트 + 거리 → z-점수 결합 → 후보 50 → 저·미방문 보장(m=2) → Top-10. 팀원 `최종_Test.ipynb`와 같은 정의 |
+| `sasrec_model.py` | 승현 SASRec 모델 코드 (handoff와 동일) |
+| `demo_data/` | 앱이 읽는 데이터 (장소 3,389곳, 임베딩, SASRec 가중치, 확정 설정, 샘플 Val 여행 525개, Test 결과표) |
+| `build_demo_data.py` | `demo_data/`를 다시 만드는 스크립트 (+ Val 재현 검사) |
+
+## demo_data를 다시 만들 때
+```bash
+python build_demo_data.py --pre <preprocessed_combined> --step3 <step3_out> --hand <sasrec_handoff>
+```
+끝에 Val 재현 검사가 출력된다. 기대값: SASRec 0.364 / 결합 0.404(저방문 0.194) / 4단계 0.402(저방문 0.216) / 저·미방문 노출 0.377→0.425.
+설정(`final_config.json`)이 바뀌면 이 검사부터 다시 확인한다.
+
+## 화면 사용법
+- 샘플 여행(Val): 실제 여행의 앞부분을 입력으로, 그다음 방문지를 '정답(⭐)'으로 보여 준다. 슬라이더로 여행 초반/후반 상황을 바꿀 수 있다.
+- 직접 입력: 장소를 방문한 순서대로 고르면 같은 파이프라인이 실시간으로 돈다.
+- 설정(⚙️): 가중치·보장 수 m을 바꿔 볼 수 있다. 기본값이 확정 설정이며, 바꾸면 경고가 뜬다.
+- 샘플 필터와 기본 여행은 데모 탐색용이다. 사례 하나의 적중 여부는 성능 근거가 아니다 (성능은 '실험 결과' 탭).
+- ⚠ 표시: 같은 POI_ID의 방문 좌표가 30km 넘게 흩어진 장소. 원본 데이터의 장소 매칭 오류 가능성이 있다.
