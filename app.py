@@ -62,12 +62,8 @@ def nm(i: int) -> str:
 
 
 # --------------------------------------------------------------------------- 사이드바
-from report_view import render_reports  # noqa: E402
+from study import render_study  # noqa: E402
 
-view = st.sidebar.radio("화면", ["🧭 추천 데모", "📚 연구 보고서"], key="view")
-if view.startswith("📚"):
-    render_reports(DATA)
-    st.stop()
 st.sidebar.divider()
 st.sidebar.title("🧭 입력")
 mode = st.sidebar.radio("입력 방식", ["샘플 여행 (Val)", "직접 입력"], help="샘플은 검증(Val) 데이터의 실제 여행입니다.")
@@ -259,7 +255,7 @@ st.info("**읽는 법** · 구분: 🔵 고방문(학습 방문 6회 이상) �
         "한 여행의 적중 여부는 사례일 뿐이며 성능 근거가 아닙니다. 전체 성능은 '실험 결과' 탭을 보세요.")
 
 # --------------------------------------------------------------------------- 탭
-t1, t2, t3, t4 = st.tabs(["🔁 방식 비교 (재랭킹 전후)", "🧮 점수 구성", "🗺️ 지도", "📊 실험 결과"])
+t1, t2, t3, t4, t5 = st.tabs(["🔁 방식 비교 (재랭킹 전후)", "🧮 점수 구성", "🗺️ 지도", "📊 실험 결과", "🔬 왜 이렇게 만들었나"])
 
 with t1:
     st.caption("같은 입력으로 방식을 바꿔 본 결과입니다 (발표·분석용). 메인 화면의 추천은 오른쪽 '제안' 한 가지입니다.")
@@ -442,3 +438,6 @@ with t4:
         st.image(str(figs / "rerank_trade_off.png"), caption="재랭킹 trade-off (Val): 가로 전체 Recall@10, 세로 저·미방문 노출비율. 보장은 Recall을 유지하며 노출을 올리고, 보너스는 Recall이 급락, MMR은 변화 없음.")
         st.image(str(figs / "test_tradeoff_group.png"), caption="Test: 정확도 대비 노출(왼쪽)과 그룹별 Recall(오른쪽)")
         st.image(str(figs / "test_paired_forest.png"), caption="Test: paired 차이의 95% 범위. 선이 0을 가로지르면 '차이가 있다고 말할 수 없음'")
+
+with t5:
+    render_study(DATA)
